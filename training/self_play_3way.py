@@ -43,6 +43,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from stable_baselines3 import PPO
+from stable_baselines3.common.callbacks import BaseCallback, CallbackList
 from stable_baselines3.common.monitor import Monitor
 
 from envs import (
@@ -98,6 +99,31 @@ _LOADERS = {
     "attacker": _load_attacker_fn,
     "deployment": _load_deployment_fn,
 }
+
+
+class StageProgressCallback(BaseCallback):
+    """Print `<done> / <total>` every ``print_frac`` of the stage budget."""
+
+    def __init__(self, label: str, total: int, print_frac: float = 0.25):
+        super().__init__()
+        self.label = label
+        self.total = total
+        self.step_bucket = max(1, int(total * print_frac))
+        self._start = 0
+        self._last = 0
+
+    def _on_training_start(self) -> None:
+        self._start = self.num_timesteps
+        self._last = 0
+
+    def _on_step(self) -> bool:
+        done = self.num_timesteps - self._start
+        if done - self._last >= self.step_bucket:
+            pct = 100.0 * done / max(1, self.total)
+            print(f"    [{self.label}] {done:,} / {self.total:,}  ({pct:.0f}%)",
+                  flush=True)
+            self._last = done
+        return True
 
 
 # --- Opponent pool ----------------------------------------------------- #
@@ -214,9 +240,9 @@ def _render_reward_png(csv_path: str, png_path: str, title: str) -> None:
     plt.close(fig)
 
 
-def _render_final_gif(run_dir: str, final_paths: dict, episodes: int,
-                      seed: int, gif_name: str) -> Optional[str]:
-    """Spawn evaluation/eval.py --save_gif with the final-iter snapshots."""
+def _render_gif(run_dir: str, snapshot_paths: dict, episodes: int,
+                seed: int, gif_name: str) -> Optional[str]:
+    """Spawn evaluation/eval.py --save_gif with the given snapshots."""
     eval_script = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
         "evaluation", "eval.py",
@@ -230,20 +256,23 @@ def _render_final_gif(run_dir: str, final_paths: dict, episodes: int,
         "--save_gif",
         "--gif_name", gif_name,
         "--out_dir", out_dir,
-        "--attacker_model", final_paths["attacker"],
-        "--deployment_model", final_paths["deployment"],
-        "--tactical_model", final_paths["tactical"],
+        "--attacker_model", snapshot_paths["attacker"],
+        "--deployment_model", snapshot_paths["deployment"],
+        "--tactical_model", snapshot_paths["tactical"],
     ]
-    print(f"  running: {' '.join(cmd[1:3])} ...")
     try:
-        res = subprocess.run(cmd, check=True, capture_output=True, text=True)
-        for line in res.stdout.splitlines()[-6:]:
-            print(f"    {line}")
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
     except subprocess.CalledProcessError as e:
-        print("  [warn] eval subprocess failed; skipping gif")
-        print(e.stderr[-400:] if e.stderr else "")
+        print(f"    [warn] gif render failed: {e.stderr[-200:] if e.stderr else e}")
         return None
     return os.path.join(out_dir, gif_name)
+
+
+def _render_all_reward_pngs(plots_dir: str, reward_logs: dict, run_name: str) -> None:
+    for agent in ("deployment", "tactical", "attacker"):
+        png = os.path.join(plots_dir, f"{run_name}_{agent}_reward.png")
+        _render_reward_png(reward_logs[agent], png,
+                           title=f"{run_name} :: {agent}")
 
 
 # --- Main loop --------------------------------------------------------- #
@@ -256,18 +285,25 @@ def main():
                              "so runs never overwrite each other. "
                              "If omitted, the prefix defaults to 'sp3'.")
     parser.add_argument("--runs_root", default="outputs/runs")
-    parser.add_argument("--iterations", type=int, default=4)
-    parser.add_argument("--deployment_steps", type=int, default=5_000)
-    parser.add_argument("--tactical_steps", type=int, default=40_000)
-    parser.add_argument("--attacker_steps", type=int, default=10_000)
-    parser.add_argument("--pool_size", type=int, default=4)
+    # Smaller per-stage budgets + more iterations => faster rotation,
+    # closer to simultaneous multi-agent RL. Each stage still runs at
+    # least 2 PPO rollouts so gradient estimates aren't degenerate.
+    parser.add_argument("--iterations", type=int, default=20)
+    parser.add_argument("--deployment_steps", type=int, default=1_024)
+    parser.add_argument("--tactical_steps", type=int, default=2_048)
+    parser.add_argument("--attacker_steps", type=int, default=512)
+    parser.add_argument("--pool_size", type=int, default=6)
     parser.add_argument("--n_envs", type=int, default=4)
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--ppo_verbose", type=int, default=1,
-                        help="Passed to PPO verbose (1 = rollout tables).")
+    parser.add_argument("--ppo_verbose", type=int, default=0,
+                        help="PPO verbose (0 silent, 1 prints SB3 rollout tables).")
     parser.add_argument("--no_animation", action="store_true",
                         help="Skip rendering the final gif.")
-    parser.add_argument("--gif_episodes", type=int, default=3)
+    parser.add_argument("--gif_episodes", type=int, default=1)
+    parser.add_argument("--gif_every", type=int, default=4,
+                        help="Render a gif every N iterations (and always on "
+                             "the final iteration). With many short iterations "
+                             "you don't want a gif per rotation.")
     args = parser.parse_args()
 
     suffix = (
@@ -283,7 +319,7 @@ def main():
     for d in (models_dir, plots_dir, tb_dir):
         os.makedirs(d, exist_ok=True)
 
-    with open(os.path.join(run_dir, "config.json"), "w") as f:
+    with open(os.path.join(run_dir, f"{run_name}_config.json"), "w") as f:
         json.dump({**vars(args), "run_name": run_name}, f, indent=2)
 
     print(f"\n=== run: {run_name} ===")
@@ -296,9 +332,8 @@ def main():
     # One reward-log callback per agent, reused across iterations so the CSV
     # grows monotonically. Sampling frequency scales with per-iteration budget.
     reward_logs = {
-        "deployment": os.path.join(plots_dir, "deployment.csv"),
-        "tactical": os.path.join(plots_dir, "tactical.csv"),
-        "attacker": os.path.join(plots_dir, "attacker.csv"),
+        agent: os.path.join(plots_dir, f"{run_name}_{agent}.csv")
+        for agent in ("deployment", "tactical", "attacker")
     }
     callbacks = {
         "deployment": EpisodeStatsCallback(reward_logs["deployment"], log_every=256),
@@ -346,10 +381,14 @@ def main():
                 "tactical": tac_model,
                 "attacker": atk_model,
             }[stage_name]
+            cb = CallbackList([
+                StageProgressCallback(stage_name, timesteps),
+                callbacks[stage_name],
+            ])
             current_model = _train_stage(
                 current_model, vec, timesteps, ppo_kwargs,
-                tb_log=tb_dir, log_name=stage_name,
-                callback=callbacks[stage_name],
+                tb_log=tb_dir, log_name=f"{run_name}_{stage_name}",
+                callback=cb,
                 verbose=args.ppo_verbose,
             )
             if stage_name == "deployment":
@@ -369,32 +408,28 @@ def main():
             print(f"    saved -> {os.path.relpath(zip_path)}  "
                   f"({_fmt_dur(time.time() - stage_t0)})")
 
+        # Per-iteration artefacts: PNG reward curves and a sample gif.
+        # Writing these each iteration means interrupted runs still have
+        # plots + animations for whatever iters completed.
+        print(f"  rendering artefacts for iter {it + 1} ...")
+        _render_all_reward_pngs(plots_dir, reward_logs, run_name)
+        is_last_iter = (it + 1) == args.iterations
+        should_gif = (not args.no_animation
+                      and ((it + 1) % args.gif_every == 0 or is_last_iter))
+        if should_gif:
+            gif_path = _render_gif(
+                run_dir, dict(final_paths),
+                episodes=args.gif_episodes,
+                seed=args.seed + 1000 * (it + 1),
+                gif_name=f"{run_name}_iter{it}.gif",
+            )
+            if gif_path:
+                print(f"    gif -> {os.path.relpath(gif_path)}")
+
         print(f"  iter {it + 1} done in {_fmt_dur(time.time() - it_t0)}\n")
 
     print(f"training complete in {_fmt_dur(time.time() - run_t0)}\n")
-
-    # Reward curves.
-    print("=== rendering reward curves ===")
-    for agent in ("deployment", "tactical", "attacker"):
-        png = os.path.join(plots_dir, f"{agent}_reward.png")
-        _render_reward_png(reward_logs[agent], png,
-                           title=f"{run_name} :: {agent}")
-        if os.path.exists(png):
-            print(f"  {os.path.relpath(png)}")
-
-    # Final-iteration animation.
-    if not args.no_animation:
-        print("\n=== rendering final animation ===")
-        gif_path = _render_final_gif(
-            run_dir, final_paths,
-            episodes=args.gif_episodes,
-            seed=args.seed,
-            gif_name=f"{run_name}_final.gif",
-        )
-        if gif_path:
-            print(f"  {os.path.relpath(gif_path)}")
-
-    print(f"\n=== run '{run_name}' done ===")
+    print(f"=== run '{run_name}' done ===")
     print(f"snapshots : {os.path.relpath(models_dir)}")
     print(f"reward png: {os.path.relpath(plots_dir)}")
     print(f"tb losses : tensorboard --logdir {os.path.relpath(tb_dir)}")

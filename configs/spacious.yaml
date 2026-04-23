@@ -1,20 +1,23 @@
-# Spacious map variant: smaller city and road rings pushed much farther out,
-# so there is visibly more empty space between the city, the road network,
-# and the attack entry points on the map boundary.
+# Spacious map variant: the city AND its road network keep their default
+# size and spacing — only the map itself gets bigger. The result is a big
+# empty buffer of open space between the outermost road ring and the new
+# (farther) boundary where attack entry points sit.
 
 env:
-  T: 240                   # slightly longer horizon since drones travel farther
+  T: 240                    # longer horizon: drones cross a much wider buffer
   dt: 1.0
   n_drones: 10
   n_defenders: 5
-  city_radius: 0.05        # was 0.126 — ~2.5x smaller
+  city_radius: 0.126        # unchanged from default
   city_center: [0.5, 0.5]
-  # Absolute ring radii (inner, mid, outer). All nodes still fit inside [0,1].
-  # Distance from city EDGE to each ring roughly: 0.13 / 0.25 / 0.37,
-  # vs. 0.019 / 0.114 / 0.239 on the default (compact) map — at least 2x more
-  # space for the inner and mid rings.
-  map_ring_radii: [0.18, 0.30, 0.42]
-  map_nodes_per_ring: [8, 12, 8]
+  # Playable area (xmin, ymin, xmax, ymax). Was [0,1]^2; now a 2x2 square
+  # centered on the city. Entry points (on the new boundary) are ~2x farther
+  # from the city, and the open space outside the outer ring roughly
+  # quadruples in area.
+  map_bounds: [-0.5, -0.5, 1.5, 1.5]
+  # Leave ring_radii / nodes_per_ring unset so build_fixed_map uses the
+  # default layout (inner 0.145, mid 0.240, outer 0.365 from city center) —
+  # the road network looks identical to the default map.
   drone_max_speed: 0.020
   drone_max_accel: 0.010
   defender_road_speed: 0.012

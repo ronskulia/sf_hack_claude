@@ -13,9 +13,18 @@ from envs.city_defense_env import EpisodeReplay
 from envs.fixed_map import FixedMap
 
 
-def _setup_axes(ax: plt.Axes) -> None:
-    ax.set_xlim(0, 1)
-    ax.set_ylim(0, 1)
+_INCHES_PER_UNIT = 7.5  # figure inches per 1.0 of map-coord width
+
+
+def _figsize_for_bounds(bounds: Tuple[float, float, float, float]) -> Tuple[float, float]:
+    xmin, ymin, xmax, ymax = bounds
+    return (_INCHES_PER_UNIT * (xmax - xmin), _INCHES_PER_UNIT * (ymax - ymin))
+
+
+def _setup_axes(ax: plt.Axes, bounds: Tuple[float, float, float, float] = (0.0, 0.0, 1.0, 1.0)) -> None:
+    xmin, ymin, xmax, ymax = bounds
+    ax.set_xlim(xmin, xmax)
+    ax.set_ylim(ymin, ymax)
     ax.set_aspect("equal")
     ax.set_xticks([])
     ax.set_yticks([])
@@ -32,9 +41,10 @@ def plot_map(
     title: Optional[str] = None,
 ) -> plt.Axes:
     own_fig = ax is None
+    bounds = getattr(fmap, "map_bounds", (0.0, 0.0, 1.0, 1.0))
     if own_fig:
-        fig, ax = plt.subplots(figsize=(7, 7))
-    _setup_axes(ax)
+        fig, ax = plt.subplots(figsize=_figsize_for_bounds(bounds))
+    _setup_axes(ax, bounds)
 
     # City
     city = Circle(fmap.city_center, fmap.city_radius,
@@ -79,7 +89,9 @@ def plot_episode_static(
     save_path: Optional[str] = None,
     title: Optional[str] = None,
 ) -> plt.Figure:
-    fig, ax = plt.subplots(figsize=(7.5, 7.5))
+    fig, ax = plt.subplots(figsize=_figsize_for_bounds(
+        getattr(fmap, "map_bounds", (0.0, 0.0, 1.0, 1.0))
+    ))
     plot_map(fmap, ax=ax, title=title or "Episode replay (static)")
 
     # Drone trajectories.
@@ -141,7 +153,9 @@ def animate_episode(
     fps: int = 15,
     title: Optional[str] = None,
 ):
-    fig, ax = plt.subplots(figsize=(7.5, 7.5))
+    fig, ax = plt.subplots(figsize=_figsize_for_bounds(
+        getattr(fmap, "map_bounds", (0.0, 0.0, 1.0, 1.0))
+    ))
     plot_map(fmap, ax=ax, title=title or "Episode animation")
 
     drone_positions = np.stack(replay.drone_positions, axis=0)  # (T, n_drones, 2)

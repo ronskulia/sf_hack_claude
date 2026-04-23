@@ -23,6 +23,9 @@ class FixedMap:
     entry_points: np.ndarray           # (E, 2) float, on map boundary
     deployment_nodes: List[int]        # subset of nodes allowed for initial deployment
     city_access_nodes: List[int] = field(default_factory=list)  # road nodes touching the city
+    # Axis-aligned playable area (xmin, ymin, xmax, ymax). Default is the
+    # unit square; a spacious layout can expand this to e.g. (-0.5, -0.5, 1.5, 1.5).
+    map_bounds: Tuple[float, float, float, float] = (0.0, 0.0, 1.0, 1.0)
 
     @property
     def n_nodes(self) -> int:
@@ -63,16 +66,21 @@ def build_fixed_map(
     city_radius: float = 0.126,
     ring_radii: Optional[Tuple[float, float, float]] = None,
     nodes_per_ring: Optional[Tuple[int, int, int]] = None,
+    map_bounds: Tuple[float, float, float, float] = (0.0, 0.0, 1.0, 1.0),
 ) -> FixedMap:
     """Build a deterministic map: a central city with a ring road, two inner
     rings, radial spokes, and a few cross-links to create alternative routes.
     ~30 nodes and ~50 edges.
 
     Pass absolute ``ring_radii`` (inner, mid, outer) to override the default
-    city-radius-relative layout — useful for a more spacious map where the
-    city is small and the road rings sit much farther out.
+    city-radius-relative layout. ``map_bounds`` (xmin, ymin, xmax, ymax) sets
+    the playable area; expand it to push entry points (which sit on the
+    boundary) further from the (unchanged) city.
     """
     cx, cy = city_center
+    xmin, ymin, xmax, ymax = map_bounds
+    # small inset so points don't sit exactly on the border (cleaner rendering)
+    inset = 0.03 * max(xmax - xmin, ymax - ymin)
 
     # Build nodes in concentric rings around the city.
     if ring_radii is None:
@@ -95,8 +103,8 @@ def build_fixed_map(
             angle = offset + 2 * math.pi * k / n
             x = cx + r * math.cos(angle)
             y = cy + r * math.sin(angle)
-            x = float(np.clip(x, 0.03, 0.97))
-            y = float(np.clip(y, 0.03, 0.97))
+            x = float(np.clip(x, xmin + inset, xmax - inset))
+            y = float(np.clip(y, ymin + inset, ymax - inset))
             ring_idx.append(len(positions))
             positions.append((x, y))
         ring_node_indices.append(ring_idx)
@@ -136,27 +144,27 @@ def build_fixed_map(
             _add_edge(g, u, v, pos_arr, max_speed=0.010)
 
     # Entry points on map boundary. Evenly spaced around the perimeter,
-    # placed exactly on the border of the unit square.
+    # projected onto the axis-aligned rectangle defined by map_bounds.
     entry_points = []
     for k in range(n_entry_points):
         theta = 2 * math.pi * k / n_entry_points + math.pi / n_entry_points
         dx, dy = math.cos(theta), math.sin(theta)
-        # project ray from city center onto the unit square border
         t_candidates = []
         if dx > 0:
-            t_candidates.append((1.0 - cx) / dx)
+            t_candidates.append((xmax - cx) / dx)
         elif dx < 0:
-            t_candidates.append((0.0 - cx) / dx)
+            t_candidates.append((xmin - cx) / dx)
         if dy > 0:
-            t_candidates.append((1.0 - cy) / dy)
+            t_candidates.append((ymax - cy) / dy)
         elif dy < 0:
-            t_candidates.append((0.0 - cy) / dy)
+            t_candidates.append((ymin - cy) / dy)
         t = min(t for t in t_candidates if t > 0)
         ex = cx + t * dx
         ey = cy + t * dy
         # pull slightly inside so drones can move before plot clipping
-        ex = float(np.clip(ex, 0.01, 0.99))
-        ey = float(np.clip(ey, 0.01, 0.99))
+        small = 0.01 * max(xmax - xmin, ymax - ymin)
+        ex = float(np.clip(ex, xmin + small, xmax - small))
+        ey = float(np.clip(ey, ymin + small, ymax - small))
         entry_points.append((ex, ey))
 
     entry_points = np.array(entry_points, dtype=np.float64)
@@ -181,6 +189,7 @@ def build_fixed_map(
         entry_points=entry_points,
         deployment_nodes=deployment_nodes,
         city_access_nodes=city_access_nodes,
+        map_bounds=tuple(map_bounds),
     )
 
 

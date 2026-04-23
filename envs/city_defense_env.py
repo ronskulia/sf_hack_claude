@@ -62,6 +62,9 @@ class EnvConfig:
     # 3-tuple of absolute distances to get a more spacious layout.
     map_ring_radii: Optional[Tuple[float, float, float]] = None
     map_nodes_per_ring: Optional[Tuple[int, int, int]] = None
+    # Axis-aligned playable area. Default is the unit square; expand it to
+    # place entry points farther from a same-sized city.
+    map_bounds: Tuple[float, float, float, float] = (0.0, 0.0, 1.0, 1.0)
 
     tactical_decision_interval: int = 4
     tactical_candidate_neighbors: int = 6  # max neighbors considered per step
@@ -128,6 +131,7 @@ class CityDefenseEnv:
             city_radius=self.cfg.city_radius,
             ring_radii=self.cfg.map_ring_radii,
             nodes_per_ring=self.cfg.map_nodes_per_ring,
+            map_bounds=self.cfg.map_bounds,
         )
         self.rng = np.random.default_rng(0)
         self._precompute_candidate_lists()
