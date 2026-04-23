@@ -258,4 +258,3 @@ What you should actually see:
 
 If you want a satisfying training curve out of the box, the attacker and
 deployment one-shot phases are the most rewarding to demo.
-# sf_hack_claude
