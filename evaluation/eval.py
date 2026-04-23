@@ -36,7 +36,7 @@ from envs.wrappers import (
     flatten_deployment_obs,
     flatten_tactical_obs,
 )
-from visualization import plot_episode_static
+from visualization import animate_episode, plot_episode_static
 
 
 def _load_sb3(path: str):
@@ -106,6 +106,9 @@ def main():
     parser.add_argument("--deployment_model", default=None)
     parser.add_argument("--tactical_model", default=None)
     parser.add_argument("--save_first_replay", action="store_true")
+    parser.add_argument("--save_gif", action="store_true",
+                        help="Save an animated gif of the first episode.")
+    parser.add_argument("--gif_name", default="eval_ep0_anim.gif")
     parser.add_argument("--out_dir", default="outputs/replays")
     args = parser.parse_args()
 
@@ -130,13 +133,24 @@ def main():
     print(f"destroyed  mean={destroyed.mean():.2f}  std={destroyed.std():.2f}")
     print(f"defender_win_rate: {float((destroyed > reached).mean()):.2%}")
 
-    if args.save_first_replay and replays:
+    if (args.save_first_replay or args.save_gif) and replays:
         os.makedirs(args.out_dir, exist_ok=True)
-        out = os.path.join(args.out_dir, "eval_ep0.png")
-        fig = plot_episode_static(env.map, replays[0], cfg.defender_intercept_radius,
-                                   save_path=out, title="Eval episode 0")
-        plt.close(fig)
-        print(f"First-episode replay saved to {out}")
+        title_parts = []
+        title_parts.append(f"atk={'trained' if args.attacker_model else 'scripted'}")
+        title_parts.append(f"def={'trained' if args.tactical_model else 'scripted'}")
+        title = "Eval episode 0 — " + ", ".join(title_parts)
+        if args.save_first_replay:
+            out = os.path.join(args.out_dir, "eval_ep0.png")
+            fig = plot_episode_static(env.map, replays[0], cfg.defender_intercept_radius,
+                                       save_path=out, title=title)
+            plt.close(fig)
+            print(f"First-episode static replay saved to {out}")
+        if args.save_gif:
+            out_gif = os.path.join(args.out_dir, args.gif_name)
+            _ = animate_episode(env.map, replays[0], cfg.defender_intercept_radius,
+                                save_path=out_gif, fps=15, title=title)
+            plt.close("all")
+            print(f"First-episode gif saved to {out_gif}")
 
 
 if __name__ == "__main__":

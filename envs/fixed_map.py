@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import networkx as nx
 import numpy as np
@@ -61,18 +61,28 @@ def build_fixed_map(
     n_entry_points: int = 8,
     city_center: Tuple[float, float] = (0.5, 0.5),
     city_radius: float = 0.126,
+    ring_radii: Optional[Tuple[float, float, float]] = None,
+    nodes_per_ring: Optional[Tuple[int, int, int]] = None,
 ) -> FixedMap:
     """Build a deterministic map: a central city with a ring road, two inner
     rings, radial spokes, and a few cross-links to create alternative routes.
     ~30 nodes and ~50 edges.
+
+    Pass absolute ``ring_radii`` (inner, mid, outer) to override the default
+    city-radius-relative layout — useful for a more spacious map where the
+    city is small and the road rings sit much farther out.
     """
     cx, cy = city_center
 
     # Build nodes in concentric rings around the city.
-    ring_radii = [city_radius * 1.15,   # inner ring close to city
-                  city_radius * 1.9,    # mid ring
-                  city_radius * 2.9]    # outer ring (still inside map)
-    nodes_per_ring = [8, 12, 8]
+    if ring_radii is None:
+        ring_radii = (city_radius * 1.15,   # inner ring close to city
+                      city_radius * 1.9,    # mid ring
+                      city_radius * 2.9)    # outer ring (still inside map)
+    ring_radii = list(ring_radii)
+    if nodes_per_ring is None:
+        nodes_per_ring = (8, 12, 8)
+    nodes_per_ring = list(nodes_per_ring)
 
     positions: List[Tuple[float, float]] = []
     ring_node_indices: List[List[int]] = []
@@ -154,9 +164,12 @@ def build_fixed_map(
     # deployment nodes = inner + mid ring (closer to city so defenders matter)
     deployment_nodes = sorted(ring_node_indices[0] + ring_node_indices[1])
 
-    # city access nodes = any node inside city_radius * 1.3
+    # city access nodes = any node within ~inner-ring distance of the city.
+    # Use the inner-ring radius (with a small buffer) so this stays meaningful
+    # even when the city is small relative to the road network.
+    city_access_cutoff = max(city_radius * 1.3, ring_radii[0] * 1.05)
     city_access_nodes = [i for i, p in enumerate(positions)
-                         if np.linalg.norm(np.array(p) - np.array(city_center)) <= city_radius * 1.3]
+                         if np.linalg.norm(np.array(p) - np.array(city_center)) <= city_access_cutoff]
 
     edges = list(g.edges())
     return FixedMap(

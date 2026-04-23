@@ -57,6 +57,11 @@ class EnvConfig:
 
     city_center: Tuple[float, float] = (0.5, 0.5)
     city_radius: float = 0.126
+    # Optional override for the road ring layout. If None, build_fixed_map
+    # derives ring radii from city_radius (default/compact map). Provide a
+    # 3-tuple of absolute distances to get a more spacious layout.
+    map_ring_radii: Optional[Tuple[float, float, float]] = None
+    map_nodes_per_ring: Optional[Tuple[int, int, int]] = None
 
     tactical_decision_interval: int = 4
     tactical_candidate_neighbors: int = 6  # max neighbors considered per step
