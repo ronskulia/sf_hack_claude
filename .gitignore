@@ -1,0 +1,49 @@
+.DS_Store
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.hypothesis/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Packaging/build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# Editor/IDE files
+.idea/
+.vscode/
+
+# Local environment files
+.env
+.env.*
+*.local
+
+# Coverage/test outputs
+.coverage
+.coverage.*
+htmlcov/
+
+# Training logs and experiment trackers
+runs/
+wandb/
+tb_logs/
+tensorboard/
+
+# Generated project artifacts
+outputs/models/
+outputs/replays/
+outputs/plots/

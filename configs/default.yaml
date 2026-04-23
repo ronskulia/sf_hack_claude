@@ -1,0 +1,41 @@
+# Default configuration for the drone attack vs road defense prototype
+
+env:
+  T: 180                 # episode length in seconds (and steps, dt=1)
+  dt: 1.0
+  n_drones: 10
+  n_defenders: 5
+  city_radius: 0.126     # ~0.05 of 1x1 area => pi*r^2 = 0.05 => r ~= 0.126
+  city_center: [0.5, 0.5]
+  drone_max_speed: 0.020            # units per second (normalized map)
+  drone_max_accel: 0.010
+  defender_road_speed: 0.012        # defender speed on roads (slower than drones)
+  defender_intercept_radius: 0.035
+  tactical_decision_interval: 4     # tactical defender decides every N steps
+  n_entry_points: 8
+  n_route_templates: 6
+  seed: 0
+  defender_visible_prob: 0.5        # probability defender starts visible to attacker
+
+rewards:
+  attacker:
+    reach_city: 10.0
+    drone_destroyed: -5.0
+  defender:
+    drone_destroyed: 5.0
+    reach_city: -10.0
+    move_penalty: 0.0
+
+training:
+  tactical:
+    total_timesteps: 200000
+    n_envs: 4
+    lr: 3.0e-4
+  attacker:
+    total_timesteps: 60000   # attacker is one-shot so each step = 1 episode
+    n_envs: 4
+    lr: 3.0e-4
+  deployment:
+    total_timesteps: 40000
+    n_envs: 4
+    lr: 3.0e-4
