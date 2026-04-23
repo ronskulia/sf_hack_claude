@@ -1,0 +1,49 @@
+# Spacious map variant: smaller city and road rings pushed much farther out,
+# so there is visibly more empty space between the city, the road network,
+# and the attack entry points on the map boundary.
+
+env:
+  T: 240                   # slightly longer horizon since drones travel farther
+  dt: 1.0
+  n_drones: 10
+  n_defenders: 5
+  city_radius: 0.05        # was 0.126 — ~2.5x smaller
+  city_center: [0.5, 0.5]
+  # Absolute ring radii (inner, mid, outer). All nodes still fit inside [0,1].
+  # Distance from city EDGE to each ring roughly: 0.13 / 0.25 / 0.37,
+  # vs. 0.019 / 0.114 / 0.239 on the default (compact) map — at least 2x more
+  # space for the inner and mid rings.
+  map_ring_radii: [0.18, 0.30, 0.42]
+  map_nodes_per_ring: [8, 12, 8]
+  drone_max_speed: 0.020
+  drone_max_accel: 0.010
+  defender_road_speed: 0.012
+  defender_intercept_radius: 0.035
+  tactical_decision_interval: 4
+  n_entry_points: 8
+  n_route_templates: 6
+  seed: 0
+  defender_visible_prob: 0.5
+
+rewards:
+  attacker:
+    reach_city: 10.0
+    drone_destroyed: -5.0
+  defender:
+    drone_destroyed: 5.0
+    reach_city: -10.0
+    move_penalty: 0.0
+
+training:
+  tactical:
+    total_timesteps: 200000
+    n_envs: 4
+    lr: 3.0e-4
+  attacker:
+    total_timesteps: 60000
+    n_envs: 4
+    lr: 3.0e-4
+  deployment:
+    total_timesteps: 40000
+    n_envs: 4
+    lr: 3.0e-4

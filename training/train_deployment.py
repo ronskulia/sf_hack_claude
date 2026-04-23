@@ -64,6 +64,10 @@ def main():
         city_center=tuple(conf["env"]["city_center"]),
         city_radius=conf["env"]["city_radius"],
         defender_visible_prob=conf["env"]["defender_visible_prob"],
+        map_ring_radii=(tuple(conf["env"]["map_ring_radii"])
+                        if conf["env"].get("map_ring_radii") else None),
+        map_nodes_per_ring=(tuple(conf["env"]["map_nodes_per_ring"])
+                            if conf["env"].get("map_nodes_per_ring") else None),
     )
     n_envs = args.n_envs or conf["training"]["deployment"]["n_envs"]
     timesteps = args.timesteps or conf["training"]["deployment"]["total_timesteps"]

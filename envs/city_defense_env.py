@@ -126,6 +126,8 @@ class CityDefenseEnv:
             n_entry_points=self.cfg.n_entry_points,
             city_center=self.cfg.city_center,
             city_radius=self.cfg.city_radius,
+            ring_radii=self.cfg.map_ring_radii,
+            nodes_per_ring=self.cfg.map_nodes_per_ring,
         )
         self.rng = np.random.default_rng(0)
         self._precompute_candidate_lists()
