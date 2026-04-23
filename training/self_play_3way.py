@@ -286,11 +286,12 @@ def main():
                              "If omitted, the prefix defaults to 'sp3'.")
     parser.add_argument("--runs_root", default="outputs/runs")
     # Smaller per-stage budgets + more iterations => faster rotation,
-    # closer to simultaneous multi-agent RL. Each stage still runs at
-    # least 2 PPO rollouts so gradient estimates aren't degenerate.
+    # closer to simultaneous multi-agent RL. Tactical command learning is
+    # the hardest stage, so it gets a larger default budget than the
+    # one-shot deployment / attacker stages.
     parser.add_argument("--iterations", type=int, default=20)
     parser.add_argument("--deployment_steps", type=int, default=1_024)
-    parser.add_argument("--tactical_steps", type=int, default=2_048)
+    parser.add_argument("--tactical_steps", type=int, default=8_192)
     parser.add_argument("--attacker_steps", type=int, default=512)
     parser.add_argument("--pool_size", type=int, default=6)
     parser.add_argument("--n_envs", type=int, default=4)

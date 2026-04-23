@@ -29,6 +29,11 @@
               doCheck = false;
               nativeCheckInputs = [];
             });
+            stable-baselines3 = prev.stable-baselines3.overridePythonAttrs (old: {
+              doCheck = false;
+              nativeCheckInputs = [];
+            });
+
 
             gymnasium = (prev.gymnasium.override {
               mujoco = null;
@@ -50,6 +55,7 @@
           pettingzoo
           jax
           jaxlib
+          stable-baselines3
 
           # City / graph topology
           networkx

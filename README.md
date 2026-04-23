@@ -258,3 +258,13 @@ What you should actually see:
 
 If you want a satisfying training curve out of the box, the attacker and
 deployment one-shot phases are the most rewarding to demo.
+
+python training/self_play.py --iterations 2 --tactical_steps 500 --attacker_steps 150
+
+python evaluation/eval.py --episodes 30 \
+    --attacker_model outputs/models/attacker_planner \
+    --deployment_model outputs/models/deployment \
+    --tactical_model outputs/models/tactical_defender \
+    --save_first_replay
+
+python scripts/demo_scripted.py --episodes 1 --gif
