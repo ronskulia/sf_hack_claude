@@ -59,7 +59,6 @@ from envs.wrappers import (
     flatten_tactical_obs,
 )
 from training.common import EpisodeStatsCallback, make_vec_env
-from visualization.render import plot_training_curve
 
 
 # --- Adapters: saved .zip -> callable opponent fn ---------------------- #
@@ -154,13 +153,14 @@ class OpponentPool:
 
 # --- Env factories ----------------------------------------------------- #
 
-def _deployment_env_fn(cfg, pool, rng, seed_base):
+def _deployment_env_fn(cfg, pool, seed_base):
     def make_fn(i):
+        worker_rng = random.Random(seed_base + i * 7919)
         def _thunk():
             env = DeploymentEnv(
                 cfg=cfg,
-                attacker_fn=pool.sample_fn("attacker", rng),
-                tactical_fn=pool.sample_fn("tactical", rng),
+                attacker_fn=pool.sample_fn("attacker", worker_rng),
+                tactical_fn=pool.sample_fn("tactical", worker_rng),
                 seed=seed_base + i,
             )
             return Monitor(env)
@@ -168,13 +168,14 @@ def _deployment_env_fn(cfg, pool, rng, seed_base):
     return make_fn
 
 
-def _tactical_env_fn(cfg, pool, rng, seed_base):
+def _tactical_env_fn(cfg, pool, seed_base):
     def make_fn(i):
+        worker_rng = random.Random(seed_base + i * 7919)
         def _thunk():
             env = TacticalDefenderEnv(
                 cfg=cfg,
-                attacker_fn=pool.sample_fn("attacker", rng),
-                deployment_fn=pool.sample_fn("deployment", rng),
+                attacker_fn=pool.sample_fn("attacker", worker_rng),
+                deployment_fn=pool.sample_fn("deployment", worker_rng),
                 seed=seed_base + i,
             )
             return Monitor(env)
@@ -182,28 +183,37 @@ def _tactical_env_fn(cfg, pool, rng, seed_base):
     return make_fn
 
 
-def _attacker_env_fn(cfg, pool, rng, seed_base):
+def _attacker_env_fn(cfg, pool, seed_base):
     def make_fn(i):
+        worker_rng = random.Random(seed_base + i * 7919)
         def _thunk():
             env = AttackerPlannerEnv(
                 cfg=cfg,
-                deployment_fn=pool.sample_fn("deployment", rng),
-                tactical_fn=pool.sample_fn("tactical", rng),
+                deployment_fn=pool.sample_fn("deployment", worker_rng),
+                tactical_fn=pool.sample_fn("tactical", worker_rng),
                 seed=seed_base + i,
             )
             return Monitor(env)
         return _thunk
     return make_fn
+
+
+def _parse_arch(arch_str: str) -> list[int]:
+    """Parse '256,256' or '512,512,512' into [256, 256] etc."""
+    parts = [p.strip() for p in arch_str.split(",") if p.strip()]
+    if not parts:
+        raise ValueError(f"empty policy_arch: {arch_str!r}")
+    return [int(p) for p in parts]
 
 
 # --- Training stage helper -------------------------------------------- #
 
-def _train_stage(model, vec_env, timesteps, ppo_kwargs,
+def _train_stage(model, vec_env, timesteps, ppo_kwargs, net_arch,
                  tb_log, log_name, callback, verbose):
     """Create the PPO model on first call, then reuse + set_env thereafter."""
     if model is None:
         model = PPO("MlpPolicy", vec_env, verbose=verbose,
-                    policy_kwargs=dict(net_arch=[128, 128]),
+                    policy_kwargs=dict(net_arch=list(net_arch)),
                     tensorboard_log=tb_log,
                     **ppo_kwargs)
         reset_ts = True
@@ -227,16 +237,45 @@ def _fmt_dur(seconds: float) -> str:
 
 # --- Post-training artefacts ------------------------------------------ #
 
-def _render_reward_png(csv_path: str, png_path: str, title: str) -> None:
-    """Render a PNG from the EpisodeStatsCallback CSV (no-op if empty)."""
+def _render_reward_png(csv_path: str, png_path: str, title: str,
+                       iter_boundaries=()) -> None:
+    """Render a PNG showing cumulative reward across all iterations.
+
+    ``iter_boundaries`` is a list of step counts where each iteration
+    ended; we draw vertical dashed lines there so you can see where
+    one round of round-robin ended and the next began.
+    """
     if not os.path.exists(csv_path):
         return
+    import csv as _csv
+    rows = []
     with open(csv_path) as f:
-        n_rows = sum(1 for _ in f) - 1  # minus header
-    if n_rows < 1:
+        r = _csv.reader(f)
+        next(r, None)  # header
+        for row in r:
+            rows.append([float(x) for x in row])
+    if not rows:
         print(f"  [skip] {csv_path} has no rows yet (log_every too large?)")
         return
-    fig = plot_training_curve(csv_path, save_path=png_path, title=title)
+    arr = np.array(rows)
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4))
+    axes[0].plot(arr[:, 0], arr[:, 1])
+    axes[0].set_xlabel("step")
+    axes[0].set_ylabel("mean episode reward")
+    axes[0].set_title("reward")
+    axes[1].plot(arr[:, 0], arr[:, 2], label="destroyed")
+    axes[1].plot(arr[:, 0], arr[:, 3], label="reached")
+    axes[1].set_xlabel("step")
+    axes[1].set_ylabel("drones")
+    axes[1].legend()
+    axes[1].set_title("per-episode counts")
+    for b in iter_boundaries:
+        for ax in axes:
+            ax.axvline(x=b, color="gray", linestyle="--",
+                       alpha=0.35, linewidth=0.8)
+    fig.suptitle(title)
+    fig.tight_layout()
+    fig.savefig(png_path, dpi=120, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -268,11 +307,13 @@ def _render_gif(run_dir: str, snapshot_paths: dict, episodes: int,
     return os.path.join(out_dir, gif_name)
 
 
-def _render_all_reward_pngs(plots_dir: str, reward_logs: dict, run_name: str) -> None:
+def _render_all_reward_pngs(plots_dir: str, reward_logs: dict, run_name: str,
+                             boundaries: dict) -> None:
     for agent in ("deployment", "tactical", "attacker"):
         png = os.path.join(plots_dir, f"{run_name}_{agent}_reward.png")
         _render_reward_png(reward_logs[agent], png,
-                           title=f"{run_name} :: {agent}")
+                           title=f"{run_name} :: {agent}",
+                           iter_boundaries=boundaries.get(agent, ()))
 
 
 # --- Main loop --------------------------------------------------------- #
@@ -291,13 +332,29 @@ def main():
     # one-shot deployment / attacker stages.
     parser.add_argument("--iterations", type=int, default=20)
     parser.add_argument("--deployment_steps", type=int, default=1_024)
-    parser.add_argument("--tactical_steps", type=int, default=8_192)
+    parser.add_argument("--tactical_steps", type=int, default=204_800)
     parser.add_argument("--attacker_steps", type=int, default=512)
     parser.add_argument("--pool_size", type=int, default=6)
     parser.add_argument("--n_envs", type=int, default=4)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--ppo_verbose", type=int, default=0,
                         help="PPO verbose (0 silent, 1 prints SB3 rollout tables).")
+    parser.add_argument("--subproc", action="store_true",
+                        help="Use SubprocVecEnv (real multi-core rollouts). "
+                             "Recommended on multi-core CPUs; harmless to keep off "
+                             "for quick tests.")
+    parser.add_argument("--policy_arch", default="128,128",
+                        help="Comma-separated MLP widths, e.g. '256,256' or "
+                             "'512,512,512'. Bigger nets let the GPU pull its "
+                             "weight but risk overfitting for this small obs space.")
+    # Per-stage PPO rollout/batch sizes. Bigger n_steps => more data per
+    # update => lower-variance gradient; bigger batch => bigger GPU matmul.
+    parser.add_argument("--deployment_n_steps", type=int, default=64)
+    parser.add_argument("--deployment_batch", type=int, default=64)
+    parser.add_argument("--tactical_n_steps", type=int, default=256)
+    parser.add_argument("--tactical_batch", type=int, default=256)
+    parser.add_argument("--attacker_n_steps", type=int, default=64)
+    parser.add_argument("--attacker_batch", type=int, default=64)
     parser.add_argument("--no_animation", action="store_true",
                         help="Skip rendering the final gif.")
     parser.add_argument("--gif_episodes", type=int, default=1)
@@ -327,7 +384,7 @@ def main():
     print(f"artefacts -> {run_dir}\n")
 
     cfg = EnvConfig()
-    rng = random.Random(args.seed)
+    net_arch = _parse_arch(args.policy_arch)
     pool = OpponentPool(max_size=args.pool_size)
 
     # One reward-log callback per agent, reused across iterations so the CSV
@@ -343,16 +400,26 @@ def main():
     }
 
     dep_model = tac_model = atk_model = None
+    # Step count at the end of each iteration, per agent. Used to draw
+    # vertical separators on the cumulative reward PNG.
+    iter_boundaries: dict[str, list[int]] = {
+        "deployment": [], "tactical": [], "attacker": []
+    }
 
-    # PPO kwargs chosen to match the standalone train_* scripts. The
-    # deployment/attacker envs are one-shot so n_steps stays small.
-    dep_ppo = dict(n_steps=64, batch_size=64, ent_coef=0.02)
-    tac_ppo = dict(n_steps=256, batch_size=256, ent_coef=0.01)
-    atk_ppo = dict(n_steps=64, batch_size=64, ent_coef=0.01)
+    # PPO kwargs from CLI. ent_coef stays fixed per stage (not a knob the
+    # user is currently tuning).
+    dep_ppo = dict(n_steps=args.deployment_n_steps,
+                   batch_size=args.deployment_batch, ent_coef=0.02)
+    tac_ppo = dict(n_steps=args.tactical_n_steps,
+                   batch_size=args.tactical_batch, ent_coef=0.01)
+    atk_ppo = dict(n_steps=args.attacker_n_steps,
+                   batch_size=args.attacker_batch, ent_coef=0.01)
 
     total_steps = args.iterations * (args.deployment_steps
                                       + args.tactical_steps + args.attacker_steps)
-    print(f"iterations={args.iterations}  n_envs={args.n_envs}  pool_size={args.pool_size}")
+    print(f"iterations={args.iterations}  n_envs={args.n_envs}  "
+          f"pool_size={args.pool_size}  subproc={args.subproc}")
+    print(f"policy_arch={net_arch}")
     print(f"per-iter budget: dep={args.deployment_steps}  "
           f"tac={args.tactical_steps}  atk={args.attacker_steps}")
     print(f"total PPO steps: {total_steps:,}\n")
@@ -367,16 +434,16 @@ def main():
 
         for stage_name, timesteps, ppo_kwargs, env_fn_factory, seed_base in [
             ("deployment", args.deployment_steps, dep_ppo,
-             _deployment_env_fn, 3000 + it * 101),
+             _deployment_env_fn, 3000 + it * 101 + args.seed),
             ("tactical", args.tactical_steps, tac_ppo,
-             _tactical_env_fn, 4000 + it * 101),
+             _tactical_env_fn, 4000 + it * 101 + args.seed),
             ("attacker", args.attacker_steps, atk_ppo,
-             _attacker_env_fn, 5000 + it * 101),
+             _attacker_env_fn, 5000 + it * 101 + args.seed),
         ]:
             print(f"  [{stage_name}] {timesteps:,} steps ...")
             stage_t0 = time.time()
-            vec = make_vec_env(env_fn_factory(cfg, pool, rng, seed_base),
-                               args.n_envs)
+            vec = make_vec_env(env_fn_factory(cfg, pool, seed_base),
+                               args.n_envs, use_subproc=args.subproc)
             current_model = {
                 "deployment": dep_model,
                 "tactical": tac_model,
@@ -387,7 +454,7 @@ def main():
                 callbacks[stage_name],
             ])
             current_model = _train_stage(
-                current_model, vec, timesteps, ppo_kwargs,
+                current_model, vec, timesteps, ppo_kwargs, net_arch,
                 tb_log=tb_dir, log_name=f"{run_name}_{stage_name}",
                 callback=cb,
                 verbose=args.ppo_verbose,
@@ -398,6 +465,7 @@ def main():
                 tac_model = current_model
             else:
                 atk_model = current_model
+            iter_boundaries[stage_name].append(int(current_model.num_timesteps))
 
             path = os.path.join(
                 models_dir, f"{run_name}_{stage_name}_iter{it}"
@@ -413,7 +481,8 @@ def main():
         # Writing these each iteration means interrupted runs still have
         # plots + animations for whatever iters completed.
         print(f"  rendering artefacts for iter {it + 1} ...")
-        _render_all_reward_pngs(plots_dir, reward_logs, run_name)
+        _render_all_reward_pngs(plots_dir, reward_logs, run_name,
+                                 boundaries=iter_boundaries)
         is_last_iter = (it + 1) == args.iterations
         should_gif = (not args.no_animation
                       and ((it + 1) % args.gif_every == 0 or is_last_iter))

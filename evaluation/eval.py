@@ -30,6 +30,7 @@ from agents import (
     ScriptedDefenderTactical,
 )
 from envs import AttackPlan, CityDefenseEnv, EnvConfig
+from training.common import load_config
 from envs.wrappers import (
     decode_plan,
     flatten_attacker_obs,
@@ -102,6 +103,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--episodes", type=int, default=20)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--config", default=None,
+                        help="Optional YAML config (e.g. configs/spacious.yaml). "
+                             "If omitted, uses the default EnvConfig.")
     parser.add_argument("--attacker_model", default=None)
     parser.add_argument("--deployment_model", default=None)
     parser.add_argument("--tactical_model", default=None)
@@ -112,7 +116,31 @@ def main():
     parser.add_argument("--out_dir", default="outputs/replays")
     args = parser.parse_args()
 
-    cfg = EnvConfig()
+    if args.config:
+        conf = load_config(args.config)
+        cfg = EnvConfig(
+            T=conf["env"]["T"],
+            n_drones=conf["env"]["n_drones"],
+            n_defenders=conf["env"]["n_defenders"],
+            n_entry_points=conf["env"]["n_entry_points"],
+            n_route_templates=conf["env"]["n_route_templates"],
+            drone_max_speed=conf["env"]["drone_max_speed"],
+            drone_max_accel=conf["env"]["drone_max_accel"],
+            defender_road_speed=conf["env"]["defender_road_speed"],
+            defender_intercept_radius=conf["env"]["defender_intercept_radius"],
+            tactical_decision_interval=conf["env"]["tactical_decision_interval"],
+            city_center=tuple(conf["env"]["city_center"]),
+            city_radius=conf["env"]["city_radius"],
+            defender_visible_prob=conf["env"]["defender_visible_prob"],
+            map_ring_radii=(tuple(conf["env"]["map_ring_radii"])
+                            if conf["env"].get("map_ring_radii") else None),
+            map_nodes_per_ring=(tuple(conf["env"]["map_nodes_per_ring"])
+                                if conf["env"].get("map_nodes_per_ring") else None),
+            map_bounds=(tuple(conf["env"]["map_bounds"])
+                        if conf["env"].get("map_bounds") else (0.0, 0.0, 1.0, 1.0)),
+        )
+    else:
+        cfg = EnvConfig()
     env = CityDefenseEnv(cfg)
 
     atk = build_attacker(cfg, args.attacker_model, seed=args.seed)
